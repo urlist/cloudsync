@@ -1,0 +1,6 @@
+{
+    "Port": 7250,
+
+    "GSUtilCommand": "/usr/local/bin/gsutil",
+    "BucketPrefix": "test"
+}
