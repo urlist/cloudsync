@@ -8,10 +8,17 @@
 package main
 
 import (
+    "io"
     "os"
     "log"
     "fmt"
     "flag"
+
+    "strings"
+
+    "path"
+
+    "os/exec"
 
     "net/http"
 
@@ -54,17 +61,98 @@ func init() {
     }
 }
 
+func urlToFile(filename, addr string) string {
+    var (
+        err error
+        resp *http.Response
+        f *os.File
+    )
+
+    resp, err = http.Get(addr)
+
+    if err != nil {
+        panic(err)
+    }
+
+    defer resp.Body.Close()
+
+    filepath := path.Join(os.TempDir(), filename)
+
+    f, err = os.Create(filepath)
+
+    if err != nil {
+        panic(err)
+    }
+
+    defer f.Close()
+
+    io.Copy(f, resp.Body)
+
+    return filepath
+}
+
+func executePreHook(cmdName string, cs *lib.Cloudsync) error {
+    cmd := exec.Command(cmdName, cs.Name)
+
+    if output, err := cmd.CombinedOutput(); err != nil {
+        log.Print(string(output))
+        return err
+    }
+
+    return nil
+}
+
 func rootHandler(w http.ResponseWriter, r *http.Request) {
+    var (
+        fileaddr,
+        filename,
+        fileid string
+    )
+
     qs := r.URL.Query()
+
+    fileaddr, fileid = qs.Get("filename"), qs.Get("fileid")
+
+    log.Print(fileaddr)
+
+    if fileaddr == "" {
+        log.Print("Missing argument: filename")
+        http.Error(w, "Missing argument", 400)
+        return
+    }
+
+    if strings.HasPrefix(fileaddr, "http://") ||
+       strings.HasPrefix(fileaddr, "https://") {
+
+        if fileid == "" {
+            log.Print("Missing argument: fileid")
+            http.Error(w, "Missing argument", 400)
+            return
+        }
+
+        filename = urlToFile(fileid, fileaddr)
+    } else {
+        filename = fileaddr
+    }
 
     cloudsync := lib.NewCloudsync(
         config.GSUtilCommand, config.BucketPrefix,
-        qs["action"][0], qs["bucket"][0], qs["filename"][0],
+        qs.Get("action"), qs.Get("bucket"), filename,
     )
 
     for _, x := range []string{cloudsync.Action, cloudsync.Bucket, cloudsync.Name} {
         if x == "" {
+            log.Print("Missing argugments")
             http.Error(w, "Wrong arguments", 400)
+            return
+        }
+    }
+
+    if preHook, ok := qs["prehook"]; ok && preHook[0] != "" {
+        if err := executePreHook(preHook[0], cloudsync); err != nil {
+            errMsg := fmt.Sprintf("PreHook failure: %v", err)
+            log.Print(errMsg)
+            http.Error(w, errMsg, 500)
             return
         }
     }
@@ -74,12 +162,14 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
     if err != nil {
         log.Printf("FAIL: %s", err)
 
-        http.Error(w, "", 500)
+        http.Error(w, fmt.Sprintf("%v", err), 500)
         return
     }
 
-    log.Print("OK")
-    fmt.Fprint(w, "OK")
+    remoteAddress := cloudsync.LinkAddress()
+
+    log.Printf("OK --- %v", remoteAddress)
+    fmt.Fprint(w, remoteAddress)
 }
 
 func main() {
