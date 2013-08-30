@@ -23,22 +23,37 @@ type Cloudsync struct {
     CmdPath string
 }
 
+
+
 func (n *Cloudsync) BucketName() string {
     clean := func(x string) string {
         return strings.TrimRight(x, "/")
     }
 
     if n.BucketPrefix == "" {
-        return clean(fmt.Sprintf("gs://%s", n.Bucket))
+        return clean(n.Bucket)
     }
 
-    bucketName := fmt.Sprintf("gs://%s-%s", n.BucketPrefix, n.Bucket)
+    return clean(fmt.Sprintf("%s-%s", n.BucketPrefix, n.Bucket))
+}
 
-    return clean(bucketName)
+func (n *Cloudsync) BucketPath() string {
+    return fmt.Sprintf("gs://%v", n.BucketName())
+}
+
+func (n *Cloudsync) LinkAddress() string {
+    nameParts := strings.Split(n.Name, "/")
+    filename := nameParts[len(nameParts) - 1]
+
+    return fmt.Sprintf(
+        "http://commondatastorage.googleapis.com/%v/%v",
+        n.BucketName(),
+        filename,
+    )
 }
 
 func (n *Cloudsync) CloudPut() error {
-    cmd := exec.Command(n.CmdPath, "cp", n.Name, n.BucketName())
+    cmd := exec.Command(n.CmdPath, "cp", n.Name, n.BucketPath())
 
     if output, err := cmd.CombinedOutput(); err != nil {
         log.Print(string(output))
@@ -49,7 +64,7 @@ func (n *Cloudsync) CloudPut() error {
 }
 
 func (n *Cloudsync) CloudDel() error {
-    filename := fmt.Sprintf("%s/%s", strings.TrimRight(n.BucketName(), "/"),
+    filename := fmt.Sprintf("%s/%s", strings.TrimRight(n.BucketPath(), "/"),
                                      strings.TrimLeft(n.Name, "/"))
 
     cmd := exec.Command(n.CmdPath, "rm", filename)
@@ -65,7 +80,7 @@ func (n *Cloudsync) CloudDel() error {
 func (n *Cloudsync) Exec() error {
     var err error
 
-    log.Printf("EXEC: %s %s => %s", n.Action, n.BucketName(), n.Name)
+    log.Printf("EXEC: %s %s => %s", n.Action, n.BucketPath(), n.Name)
 
     switch n.Action {
         case "put":
